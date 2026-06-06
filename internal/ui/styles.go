@@ -33,6 +33,10 @@ var (
 	SubtleStyle = lipgloss.NewStyle().
 			Foreground(SubtleColor)
 
+	BrandStyle = lipgloss.NewStyle().
+			Foreground(BrandColor).
+			Bold(true)
+
 	// Dynamic Size Styles
 	sizeSmall  = lipgloss.NewStyle().Foreground(BrandColor)
 	sizeMedium = lipgloss.NewStyle().Foreground(WarningColor)
