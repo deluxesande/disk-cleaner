@@ -10,6 +10,7 @@ import (
 	"github.com/deluxesande/disk-cleaner/internal/scanner"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -21,6 +22,8 @@ const (
 	stateInteractiveList
 	stateDeleting
 	stateResultSummary
+	stateExclusionsList // The interactive list of custom rules
+	stateExclusionsAdd  // The text input mode to add a new rule
 )
 
 type selectableItem struct {
@@ -40,20 +43,27 @@ type deleteDoneMsg struct {
 }
 
 type mainModel struct {
-	state      sessionState
-	choices    []string
-	cursor     int
-	listCursor int
-	items      []selectableItem
-	action     string
-	cfg        *config.AppConfig
-	spinner    spinner.Model
-	freedSpace int64
+	state       sessionState
+	choices     []string
+	cursor      int
+	listCursor  int
+	items       []selectableItem
+	action      string
+	cfg         *config.AppConfig
+	spinner     spinner.Model
+	textInput   textinput.Model
+	freedSpace  int64
+	customRules []string // Holds the loaded exclusion rules
 }
 
 func InitialModel() mainModel {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
+
+	ti := textinput.New()
+	ti.Placeholder = "e.g. C:\\Projects\\Secret"
+	ti.CharLimit = 256
+	ti.Width = 50
 
 	return mainModel{
 		state: stateMenu,
@@ -64,14 +74,15 @@ func InitialModel() mainModel {
 			"Configure Exclusion Rules",
 			"Exit",
 		},
-		cursor:  0,
-		cfg:     config.Load(),
-		spinner: s,
+		cursor:    0,
+		cfg:       config.Load(),
+		spinner:   s,
+		textInput: ti,
 	}
 }
 
 func (m mainModel) Init() tea.Cmd {
-	return m.spinner.Tick
+	return tea.Batch(m.spinner.Tick, textinput.Blink)
 }
 
 func buildSweepItems(report models.DiskReport) []selectableItem {
@@ -118,6 +129,17 @@ func buildDedupeItems(duplicates []models.DuplicateGroup) []selectableItem {
 	return items
 }
 
+func buildTempItems(tempFiles []models.SpaceWaster) []selectableItem {
+	var items []selectableItem
+	if len(tempFiles) > 0 {
+		items = append(items, selectableItem{IsHeader: true, Title: "System Temporary Files"})
+		for _, item := range tempFiles {
+			items = append(items, selectableItem{Path: item.Path, Size: item.Size})
+		}
+	}
+	return items
+}
+
 func runSweepCmd(cfg *config.AppConfig) tea.Cmd {
 	return func() tea.Msg {
 		report := scanner.RunSweep(cfg)
@@ -129,6 +151,13 @@ func runDedupeCmd(cfg *config.AppConfig) tea.Cmd {
 	return func() tea.Msg {
 		duplicates := dedupe.Run(cfg)
 		return scanResultMsg{items: buildDedupeItems(duplicates)}
+	}
+}
+
+func runTempSweepCmd() tea.Cmd {
+	return func() tea.Msg {
+		tempFiles := scanner.RunTempSweep()
+		return scanResultMsg{items: buildTempItems(tempFiles)}
 	}
 }
 
@@ -177,6 +206,69 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
+		// ISOLATED EVENT LOOP: Typing a new exclusion rule
+		if m.state == stateExclusionsAdd {
+			switch msg.String() {
+			case "esc":
+				m.state = stateExclusionsList
+				m.textInput.Reset()
+				m.textInput.Blur()
+				return m, nil
+			case "enter":
+				val := strings.TrimSpace(m.textInput.Value())
+				if val != "" {
+					_ = config.AddCustomExclusion(val)
+					m.customRules = config.GetCustomExclusions() // Refresh the list
+				}
+				m.textInput.Reset()
+				m.textInput.Blur()
+				m.state = stateExclusionsList
+				return m, nil
+			case "ctrl+c":
+				return m, tea.Quit
+			default:
+				var cmd tea.Cmd
+				m.textInput, cmd = m.textInput.Update(msg)
+				return m, cmd
+			}
+		}
+
+		// ISOLATED EVENT LOOP: Managing the custom exclusions list
+		if m.state == stateExclusionsList {
+			switch msg.String() {
+			case "esc":
+				m.state = stateMenu
+				return m, nil
+			case "up", "k":
+				if m.listCursor > 0 {
+					m.listCursor--
+				}
+			case "down", "j":
+				if m.listCursor < len(m.customRules)-1 {
+					m.listCursor++
+				}
+			case "a", "n":
+				m.state = stateExclusionsAdd
+				m.textInput.Focus()
+				return m, textinput.Blink
+			case "x", "delete":
+				if len(m.customRules) > 0 {
+					target := m.customRules[m.listCursor]
+					_ = config.RemoveCustomExclusion(target)
+					m.customRules = config.GetCustomExclusions() // Refresh
+
+					// Keep cursor in bounds if we deleted the last item
+					if m.listCursor >= len(m.customRules) && m.listCursor > 0 {
+						m.listCursor--
+					}
+				}
+			case "ctrl+c":
+				return m, tea.Quit
+			}
+			return m, nil
+		}
+
+		// STANDARD EVENT LOOP: Main navigation and results list
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
@@ -229,23 +321,22 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Quit
 				}
 				m.action = m.choices[m.cursor]
-				m.state = stateScanning
 
 				switch m.cursor {
 				case 0:
+					m.state = stateScanning
 					return m, runSweepCmd(m.cfg)
 				case 1:
+					m.state = stateScanning
 					return m, runDedupeCmd(m.cfg)
 				case 2:
-					// Placeholder for Temp Files
-					return m, func() tea.Msg {
-						return scanResultMsg{items: []selectableItem{{IsHeader: true, Title: "[ Clear System Temp Files - Module integration pending ]"}}}
-					}
+					m.state = stateScanning
+					return m, runTempSweepCmd()
 				case 3:
-					// Placeholder for Exclusion Rules
-					return m, func() tea.Msg {
-						return scanResultMsg{items: []selectableItem{{IsHeader: true, Title: "[ Configure Exclusion Rules - Module integration pending ]"}}}
-					}
+					m.state = stateExclusionsList
+					m.customRules = config.GetCustomExclusions()
+					m.listCursor = 0
+					return m, nil
 				}
 
 			case stateInteractiveList:
@@ -367,6 +458,53 @@ func (m mainModel) View() string {
 
 		b.WriteString("\n")
 		b.WriteString(SubtleStyle.Render("Return to Menu: [Enter]  |  Quit: [q]"))
+		b.WriteString("\n")
+
+	case stateExclusionsList:
+		b.WriteString("\n")
+		b.WriteString(HeaderStyle.Render(" EXCLUSION RULES "))
+		b.WriteString("\n\n")
+
+		sysCount := len(config.GetSystemExclusions())
+		b.WriteString(CategoryTitleStyle.Render("System Rules (Protected):"))
+		b.WriteString("\n  ")
+		b.WriteString(SubtleStyle.Render(fmt.Sprintf("%d default OS paths protected", sysCount)))
+		b.WriteString("\n\n")
+
+		b.WriteString(CategoryTitleStyle.Render("Custom Rules:"))
+		b.WriteString("\n")
+
+		if len(m.customRules) == 0 {
+			b.WriteString("  ")
+			b.WriteString(SubtleStyle.Render("No custom rules defined."))
+			b.WriteString("\n")
+		} else {
+			for i, rule := range m.customRules {
+				cursor := "  "
+				if m.listCursor == i {
+					cursor = BrandStyle.Render("> ")
+				}
+				b.WriteString(fmt.Sprintf("%s%s\n", cursor, rule))
+			}
+		}
+
+		b.WriteString("\n")
+		b.WriteString(SubtleStyle.Render(strings.Repeat("-", 60)))
+		b.WriteString("\n")
+		b.WriteString(SubtleStyle.Render("Add New: [a]  |  Delete Selected: [x]  |  Back: [Esc]"))
+		b.WriteString("\n")
+
+	case stateExclusionsAdd:
+		b.WriteString("\n")
+		b.WriteString(HeaderStyle.Render(" ADD EXCLUSION PATH "))
+		b.WriteString("\n\n")
+
+		b.WriteString(m.textInput.View())
+
+		b.WriteString("\n\n")
+		b.WriteString(SubtleStyle.Render(strings.Repeat("-", 60)))
+		b.WriteString("\n")
+		b.WriteString(SubtleStyle.Render("Save: [Enter]  |  Cancel: [Esc]"))
 		b.WriteString("\n")
 	}
 

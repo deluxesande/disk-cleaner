@@ -22,9 +22,6 @@ const asciiBanner = `
 
 func main() {
 	fmt.Print(asciiBanner)
-	fmt.Println("------------------------------------------------------")
-	fmt.Println("Initializing UI Engine...")
-	fmt.Println("------------------------------------------------------")
 
 	p := tea.NewProgram(ui.InitialModel())
 	if _, err := p.Run(); err != nil {
