@@ -1,0 +1,39 @@
+# Build outputs
+bin/
+dist/
+build/
+out/
+
+# Go binaries and test artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage/
+coverage.out
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Editor and IDE settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
