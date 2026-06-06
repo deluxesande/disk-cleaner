@@ -4,11 +4,11 @@ Disk Cleaner is a planned high-performance, cross-platform command-line tool for
 
 The project goal is simple: scan a target directory, group cleanup candidates into understandable categories, show how much space can be recovered, and let the user decide what should be deleted.
 
-## Project Description and Tags
+## Repository Metadata
 
-**Description:** Disk Cleaner is a planned cross-platform Go CLI for safely identifying and reviewing recoverable disk usage from caches, build artifacts, temporary files, and exact duplicate files before deletion.
+**Description:** High-performance, cross-platform CLI for safely finding and reviewing recoverable disk waste (caches, build artifacts, temporary files, and exact duplicates) before deletion.
 
-**Tags:** `disk-cleaner`, `cli`, `golang`, `cross-platform`, `deduplication`, `storage-management`, `developer-tools`, `terminal-ui`
+**Suggested tags:** `disk-cleaner`, `cli`, `golang`, `cross-platform`, `deduplication`, `storage-management`, `developer-tools`, `terminal-ui`
 
 ## What It Will Clean
 
